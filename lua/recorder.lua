@@ -25,7 +25,7 @@ end
 local setMacro = function(reg, recording) vim.fn.setreg(reg, recording, "c") end
 
 -- vars which can be set by the user
-local toggleKey, breakPointKey, dapSharedKeymaps, lessNotifications, useNerdfontIcons
+local toggleKey, breakPointKey, insertBreakPointKey, dapSharedKeymaps, lessNotifications, useNerdfontIcons
 local perf = {}
 
 --------------------------------------------------------------------------------
@@ -126,7 +126,7 @@ local function playRecording()
 
 	-- EXECUTE MACRO
 	local countGiven = v.count ~= 0
-	local hasBreakPoints = fn.keytrans(macro):find(vim.pesc(breakPointKey))
+	local hasBreakPoints = fn.keytrans(macro):find(vim.pesc(breakPointKey)) or fn.keytrans(macro):find(vim.pesc(insertBreakPointKey))
 	local usePerfOptimizations = v.count1 >= perf.countThreshold
 
 	-- macro (w/ breakpoints)
@@ -135,14 +135,14 @@ local function playRecording()
 
 		local macroParts = {}
 		for _, macroPart in ipairs(vim.split(fn.keytrans(macro), vim.pesc(breakPointKey), {})) do
-			table.insert(macroParts, vim.api.nvim_replace_termcodes(macroPart, true, true, true))
+			for _, subMacroPart in ipairs(vim.split(macroPart, vim.pesc(insertBreakPointKey), {})) do
+				table.insert(macroParts, vim.api.nvim_replace_termcodes(subMacroPart, true, true, true))
+			end
 		end
 
 		local partialMacro = macroParts[breakCounter]
 
-		setMacro(reg, partialMacro)
-		normal("@" .. reg)
-		setMacro(reg, macro) -- restore original macro for all other purposes like prewing slots
+		vim.fn.feedkeys(partialMacro)
 
 		if breakCounter ~= #macroParts then
 			notify("Reached Breakpoint #" .. tostring(breakCounter))
@@ -290,11 +290,13 @@ end
 ---@class maps
 ---@field startStopRecording string
 ---@field playMacro string
+---@field insertPlayMacro string
 ---@field editMacro string
 ---@field yankMacro string
 ---@field deleteAllMacros string
 ---@field switchSlot string
 ---@field addBreakPoint string
+---@field insertAddBreakPoint string
 
 ---@param userConfig configObj
 function M.setup(userConfig)
@@ -307,11 +309,13 @@ function M.setup(userConfig)
 		mapping = {
 			startStopRecording = "q",
 			playMacro = "Q",
+			insertPlayMacro = "<C-q>",
 			switchSlot = "<C-q>",
 			editMacro = "cq",
 			deleteAllMacros = "dq",
 			yankMacro = "yq",
 			addBreakPoint = "##",
+			insertAddBreakPoint = "<C-e>",
 		},
 		dapSharedKeymaps = false,
 		clear = false,
@@ -351,6 +355,7 @@ function M.setup(userConfig)
 	-- setup keymaps
 	toggleKey = config.mapping.startStopRecording
 	breakPointKey = normalizeKeycodes(config.mapping.addBreakPoint)
+	insertBreakPointKey = normalizeKeycodes(config.mapping.insertAddBreakPoint, true, true, true)
 	local icon = config.useNerdfontIcons and " " or ""
 	local dapSharedIcon = config.useNerdfontIcons and " /  " or ""
 
@@ -371,8 +376,10 @@ function M.setup(userConfig)
 	local breakPointDesc = dapSharedKeymaps and dapSharedIcon .. "Breakpoint"
 		or icon .. "Insert Macro Breakpoint."
 	keymap("n", breakPointKey, addBreakPoint, { desc = breakPointDesc })
+	keymap("i", insertBreakPointKey, addBreakPoint, { desc = breakPointDesc })
 	local playDesc = dapSharedKeymaps and dapSharedIcon .. "Continue/Play" or icon .. "Play Macro"
 	keymap("n", config.mapping.playMacro, playRecording, { desc = playDesc })
+	keymap("i", config.mapping.insertPlayMacro, playRecording, { desc = playDesc })
 end
 
 --------------------------------------------------------------------------------
