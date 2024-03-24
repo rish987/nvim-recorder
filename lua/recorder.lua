@@ -1,4 +1,12 @@
 local M = {}
+local a = require"plenary.async"
+
+local function _wait_for_autocmd(cmds, callback)
+  vim.api.nvim_create_autocmd(cmds, { callback = callback, once = true })
+end
+
+local wait_for_autocmd = a.wrap(_wait_for_autocmd, 2)
+
 
 local fn = vim.fn
 local v = vim.v
@@ -25,7 +33,7 @@ end
 local setMacro = function(reg, recording) vim.fn.setreg(reg, recording, "c") end
 
 -- vars which can be set by the user
-local toggleKey, breakPointKey, insertBreakPointKey, dapSharedKeymaps, lessNotifications, useNerdfontIcons
+local toggleKey, toggleKeyInsert, breakPointKey, insertBreakPointKey, dapSharedKeymaps, lessNotifications, useNerdfontIcons
 local perf = {}
 
 --------------------------------------------------------------------------------
@@ -54,30 +62,50 @@ local function isPlaying() return fn.reg_executing() ~= "" end
 ---@param cmdStr any
 local function normal(cmdStr) vim.cmd.normal { cmdStr, bang = true } end
 
+local function a_normal(cmdStr)
+  local mode = vim.fn.mode()
+  if mode == "t" or mode == "i" then
+    vim.cmd.stopinsert()
+    wait_for_autocmd({"InsertLeave", "TermLeave"})
+    normal(cmdStr)
+    if mode == "i" then
+      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("a", true, true, true), "n", true)
+    else
+      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("a", true, true, true), "n", true)
+      -- vim.cmd.startinsert()
+    end
+  else
+    normal(cmdStr)
+  end
+end
+
 --------------------------------------------------------------------------------
 -- COMMANDS
 
 -- start/stop recording macro into the current slot
-local function toggleRecording()
+local function _toggleRecording()
 	local reg = macroRegs[slotIndex]
 
 	-- start recording
 	if not isRecording() then
 		breakCounter = 0 -- reset break points
-		normal("q" .. reg)
+		a_normal("q" .. reg)
 		nonEssentialNotify("Recording to [" .. reg .. "]…")
 		return
 	end
 
 	-- stop recording
 	local prevRec = getMacro(macroRegs[slotIndex])
-	normal("q")
+	a_normal("q")
 
 	-- NOTE the macro key records itself, so it has to be removed from the
 	-- register. As this function has to know the variable length of the
 	-- LHS key that triggered it, it has to be passed in via .setup()-function
-	local decodedToggleKey = vim.api.nvim_replace_termcodes(toggleKey, true, true, true)
-	local recording = getMacro(reg):sub(1, -1 * (#decodedToggleKey + 1))
+  local mode = vim.fn.mode()
+  local toggle_key = (mode == "i" or mode == "t") and toggleKeyInsert or toggleKey
+	local decodedToggleKey = vim.api.nvim_replace_termcodes(toggle_key, true, true, true)
+  local norm_macro = vim.api.nvim_replace_termcodes(fn.keytrans(getMacro(reg)), true, true, true)
+  local recording = norm_macro:sub(1, -1 * (#decodedToggleKey + 1))
 	setMacro(reg, recording)
 
 	local justRecorded = fn.keytrans(getMacro(reg))
@@ -87,6 +115,10 @@ local function toggleRecording()
 	elseif not lessNotifications then
 		nonEssentialNotify("Recorded [" .. reg .. "]:\n" .. justRecorded)
 	end
+end
+
+local function toggleRecording()
+  a.void(_toggleRecording)()
 end
 
 ---play the macro recorded in current slot
@@ -190,7 +222,8 @@ local function playRecording()
 
 	-- macro (regular)
 	else
-		normal(v.count1 .. "@" .. reg)
+		-- normal(v.count1 .. "@" .. reg) -- TODO fix count
+		vim.fn.feedkeys(getMacro(reg))
 	end
 end
 
@@ -260,7 +293,12 @@ local function addBreakPoint()
 		-- INFO nothing happens, but the key is still recorded in the macro
 		notify("Macro breakpoint added.")
 	elseif not isPlaying() and not dapSharedKeymaps then
-		notify("Cannot insert breakpoint outside of a recording.", "warn")
+    if vim.fn.mode() == "n" then
+      vim.fn.feedkeys(vim.api.nvim_replace_termcodes(breakPointKey, true, true, true), "n")
+    else
+      vim.fn.feedkeys(vim.api.nvim_replace_termcodes(insertBreakPointKey, true, true, true), "n")
+    end
+		-- notify("Cannot insert breakpoint outside of a recording.", "warn")
 	elseif not isPlaying() and dapSharedKeymaps then
 		-- only test for dap here to not interfere with user lazyloading
 		if require("dap") then require("dap").toggle_breakpoint() end
@@ -289,6 +327,7 @@ end
 
 ---@class maps
 ---@field startStopRecording string
+---@field insertStartStopRecording string
 ---@field playMacro string
 ---@field insertPlayMacro string
 ---@field editMacro string
@@ -308,8 +347,9 @@ function M.setup(userConfig)
 		slots = { "a", "b" },
 		mapping = {
 			startStopRecording = "q",
+			insertStartStopRecording = "<C-q><C-q>",
 			playMacro = "Q",
-			insertPlayMacro = "<C-q>",
+			insertPlayMacro = "<C-q>q",
 			switchSlot = "<C-q>",
 			editMacro = "cq",
 			deleteAllMacros = "dq",
@@ -354,12 +394,16 @@ function M.setup(userConfig)
 
 	-- setup keymaps
 	toggleKey = config.mapping.startStopRecording
+	toggleKeyInsert = config.mapping.insertStartStopRecording
 	breakPointKey = normalizeKeycodes(config.mapping.addBreakPoint)
 	insertBreakPointKey = normalizeKeycodes(config.mapping.insertAddBreakPoint, true, true, true)
 	local icon = config.useNerdfontIcons and " " or ""
 	local dapSharedIcon = config.useNerdfontIcons and " /  " or ""
 
 	keymap("n", toggleKey, toggleRecording, { desc = icon .. "Start/Stop Recording" })
+	-- keymap("t", toggleKeyInsert, toggleRecording, { desc = icon .. "Start/Stop Recording" })
+	keymap("i", toggleKeyInsert, toggleRecording, { desc = icon .. "Start/Stop Recording" })
+	keymap("t", toggleKeyInsert, toggleRecording, { desc = icon .. "Start/Stop Recording" })
 	keymap("n", config.mapping.switchSlot, switchMacroSlot, { desc = icon .. "Switch Macro Slot" })
 	keymap("n", config.mapping.editMacro, editMacro, { desc = icon .. "Edit Macro" })
 	keymap("n", config.mapping.yankMacro, yankMacro, { desc = icon .. "Yank Macro" })
@@ -380,6 +424,7 @@ function M.setup(userConfig)
 	local playDesc = dapSharedKeymaps and dapSharedIcon .. "Continue/Play" or icon .. "Play Macro"
 	keymap("n", config.mapping.playMacro, playRecording, { desc = playDesc })
 	keymap("i", config.mapping.insertPlayMacro, playRecording, { desc = playDesc })
+	keymap("t", config.mapping.insertPlayMacro, playRecording, { desc = playDesc })
 end
 
 --------------------------------------------------------------------------------
