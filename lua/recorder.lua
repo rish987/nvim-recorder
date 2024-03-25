@@ -1,8 +1,9 @@
 local M = {}
 local a = require"plenary.async"
+local a_util = require"plenary.async.util"
 
 local function _wait_for_autocmd(cmds, callback)
-  vim.api.nvim_create_autocmd(cmds, { callback = callback, once = true })
+	vim.api.nvim_create_autocmd(cmds, { callback = callback, once = true })
 end
 
 local wait_for_autocmd = a.wrap(_wait_for_autocmd, 2)
@@ -62,21 +63,22 @@ local function isPlaying() return fn.reg_executing() ~= "" end
 ---@param cmdStr any
 local function normal(cmdStr) vim.cmd.normal { cmdStr, bang = true } end
 
-local function a_normal(cmdStr)
-  local mode = vim.fn.mode()
-  if mode == "t" or mode == "i" then
-    vim.cmd.stopinsert()
-    wait_for_autocmd({"InsertLeave", "TermLeave"})
-    normal(cmdStr)
-    if mode == "i" then
-      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("a", true, true, true), "n", true)
-    else
-      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("a", true, true, true), "n", true)
-      -- vim.cmd.startinsert()
-    end
-  else
-    normal(cmdStr)
-  end
+local function a_normal(cmdStr, test)
+	local mode = vim.fn.mode()
+	if mode == "i" or mode == "t" then
+		vim.cmd.stopinsert()
+		if mode == "i" then
+			wait_for_autocmd({"InsertLeave"})
+		else
+			wait_for_autocmd({"TermLeave"})
+		end
+		a_util.scheduler()
+		normal(cmdStr)
+		vim.cmd.startinsert()
+		vim.cmd.startinsert()
+	else
+		normal(cmdStr)
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -96,16 +98,16 @@ local function _toggleRecording()
 
 	-- stop recording
 	local prevRec = getMacro(macroRegs[slotIndex])
-	a_normal("q")
+	a_normal("q", true)
 
 	-- NOTE the macro key records itself, so it has to be removed from the
 	-- register. As this function has to know the variable length of the
 	-- LHS key that triggered it, it has to be passed in via .setup()-function
-  local mode = vim.fn.mode()
-  local toggle_key = (mode == "i" or mode == "t") and toggleKeyInsert or toggleKey
+	local mode = vim.fn.mode()
+	local toggle_key = (mode == "i" or mode == "t") and toggleKeyInsert or toggleKey
 	local decodedToggleKey = vim.api.nvim_replace_termcodes(toggle_key, true, true, true)
-  local norm_macro = vim.api.nvim_replace_termcodes(fn.keytrans(getMacro(reg)), true, true, true)
-  local recording = norm_macro:sub(1, -1 * (#decodedToggleKey + 1))
+	local norm_macro = vim.api.nvim_replace_termcodes(fn.keytrans(getMacro(reg)), true, true, true)
+	local recording = norm_macro:sub(1, -1 * (#decodedToggleKey + 1))
 	setMacro(reg, recording)
 
 	local justRecorded = fn.keytrans(getMacro(reg))
