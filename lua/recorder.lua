@@ -15,7 +15,7 @@ local opt = vim.opt
 local keymap = vim.keymap.set
 
 -- internal vars
-local macroRegs, slotIndex, logLevel, breakCounter
+local macroRegs, slotIndex, logLevel, breakCounter, regOverride
 
 -- Use this function to normalize keycodes (which can have multiple
 -- representations, e.g. <C-f> or <C-F>).
@@ -38,7 +38,6 @@ local toggleKey, toggleKeyInsert, breakPointKey, insertBreakPointKey, dapSharedK
 local perf = {}
 
 --------------------------------------------------------------------------------
-
 -- post vim.notify with configured log level.
 -- Posts no notifications if lessNotifications is true
 ---@param msg string
@@ -54,6 +53,26 @@ local function notify(msg, loglevel)
 	if not loglevel then loglevel = "info" end
 	vim.notify(msg, vim.log.levels[loglevel:upper()], { title = "nvim-recorder" })
 end
+
+function M.setRegOverride(reg)
+	if not (reg:find("^%l$")) then
+		notify(
+			("'%s' is an invalid slot. Choose only named registers (a-z)."):format(reg),
+			"error"
+		)
+		return
+	end
+	regOverride = reg
+end
+
+function M.unsetRegOverride()
+	regOverride = nil
+end
+
+local function getCurrReg()
+	return regOverride or macroRegs[slotIndex]
+end
+
 
 ---@return boolean
 local function isRecording() return fn.reg_recording() ~= "" end
@@ -75,7 +94,6 @@ local function a_normal(cmdStr, test)
 		a_util.scheduler()
 		normal(cmdStr)
 		vim.cmd.startinsert()
-		vim.cmd.startinsert()
 	else
 		normal(cmdStr)
 	end
@@ -86,19 +104,27 @@ end
 
 -- start/stop recording macro into the current slot
 local function _toggleRecording()
-	local reg = macroRegs[slotIndex]
-
 	-- start recording
 	if not isRecording() then
+		vim.api.nvim_exec_autocmds("User", {
+			pattern = "NvimRecorderRecordStart",
+			data = { reg = getCurrReg() },
+		})
+
+		-- NOTE: above autocmd may have set regOverride
+		local reg = getCurrReg()
+
 		breakCounter = 0 -- reset break points
 		a_normal("q" .. reg)
 		nonEssentialNotify("Recording to [" .. reg .. "]…")
 		return
 	end
 
+	local reg = getCurrReg()
 	-- stop recording
-	local prevRec = getMacro(macroRegs[slotIndex])
+	local prevRec = getMacro(reg)
 	a_normal("q", true)
+	M.unsetRegOverride()
 
 	-- NOTE the macro key records itself, so it has to be removed from the
 	-- register. As this function has to know the variable length of the
@@ -116,6 +142,10 @@ local function _toggleRecording()
 		notify("Recording aborted.\n(Previous recording is kept.)")
 	elseif not lessNotifications then
 		nonEssentialNotify("Recorded [" .. reg .. "]:\n" .. justRecorded)
+		vim.api.nvim_exec_autocmds("User", {
+			pattern = "NvimRecorderRecordEnd",
+			data = { reg = reg, recording = justRecorded },
+		})
 	end
 end
 
@@ -125,9 +155,6 @@ end
 
 ---play the macro recorded in current slot
 local function playRecording()
-	local reg = macroRegs[slotIndex]
-	local macro = getMacro(reg)
-
 	-- Guard Clause 1: Toggle Breakpoint instead of Macro
 	-- WARN undocumented and prone to change https://github.com/mfussenegger/nvim-dap/discussions/810#discussioncomment-4623606
 	if dapSharedKeymaps then
@@ -144,17 +171,29 @@ local function playRecording()
 		-- stylua: ignore
 		notify(
 			"Playing the macro while it is recording would cause recursion problems. Aborting.\n" ..
-			"(You can still use recursive macros by using `@" .. reg .. "`)",
+			"(You can still use recursive macros by using `@" .. getCurrReg() .. "`)",
 			"error"
 		)
 		normal("q") -- end recording
-		setMacro(reg, "") -- empties macro since the recursion has been recorded there
+		setMacro(getCurrReg(), "") -- empties macro since the recursion has been recorded there
+
+		M.unsetRegOverride()
 		return
 	end
 
+	vim.api.nvim_exec_autocmds("User", {
+		pattern = "NvimRecorderPlay",
+		data = { reg = getCurrReg(), recording = getMacro(getCurrReg()) },
+	})
+	-- NOTE: above autocmd may have set regOverride
+
+	local macro = getMacro(getCurrReg())
+
 	-- Guard Clause 3: Slot is empty
 	if macro == "" then
-		notify("Macro Slot [" .. reg .. "] is empty.", "warn")
+		notify("Macro Slot [" .. getCurrReg() .. "] is empty.", "warn")
+
+		M.unsetRegOverride()
 		return
 	end
 
@@ -214,7 +253,7 @@ local function playRecording()
 		-- if notification is shown, defer to ensure it is displayed
 		local count = v.count1 -- counts needs to be saved due to scoping by defer_fn
 		vim.defer_fn(function()
-			normal(count .. "@" .. reg)
+			normal(count .. "@" .. getCurrReg())
 
 			---@diagnostic disable-next-line: assign-type-mismatch neodev buggy here?
 			if perf.lazyredraw then vim.opt.lazyredraw = original.lazyredraw end
@@ -225,17 +264,20 @@ local function playRecording()
 	-- macro (regular)
 	else
 		-- normal(v.count1 .. "@" .. reg) -- TODO fix count
-		vim.fn.feedkeys(getMacro(reg))
+		vim.fn.feedkeys(getMacro(getCurrReg()))
 	end
+	M.unsetRegOverride()
 end
 
 ---changes the active slot
 local function switchMacroSlot()
+	M.unsetRegOverride()
+
 	slotIndex = slotIndex + 1
 	breakCounter = 0 -- reset breakpoint counter
 
 	if slotIndex > #macroRegs then slotIndex = 1 end
-	local reg = macroRegs[slotIndex]
+	local reg = getCurrReg()
 	local currentMacro = fn.keytrans(getMacro(reg))
 	local msg = " Now using macro slot [" .. reg .. "]"
 	if currentMacro ~= "" then
@@ -249,7 +291,7 @@ end
 ---edit the current slot
 local function editMacro()
 	breakCounter = 0 -- reset breakpoint counter
-	local reg = macroRegs[slotIndex]
+	local reg = getCurrReg()
 	local macroContent = getMacro(reg)
 	local inputConfig = {
 		prompt = "Edit Macro [" .. reg .. "]:",
@@ -273,7 +315,7 @@ end
 
 local function yankMacro()
 	breakCounter = 0
-	local reg = macroRegs[slotIndex]
+	local reg = getCurrReg()
 	local macroContent = fn.keytrans(getMacro(reg))
 	if macroContent == "" then
 		notify("Nothing to copy, macro slot [" .. reg .. "] is still empty.", "warn")
@@ -437,7 +479,7 @@ end
 function M.recordingStatus()
 	if not isRecording() then return "" end
 	local icon = useNerdfontIcons and "  " or ""
-	return icon .. "Recording… [" .. macroRegs[slotIndex] .. "]"
+	return icon .. "Recording… [" .. getCurrReg() .. "]"
 end
 
 ---returns non-empty for status line plugins.
@@ -448,7 +490,7 @@ function M.displaySlots()
 
 	for _, reg in pairs(macroRegs) do
 		local empty = getMacro(reg) == ""
-		local active = macroRegs[slotIndex] == reg
+		local active = getCurrReg() == reg
 		local hasBreakPoints = getMacro(reg):find(vim.pesc(breakPointKey))
 		local bpIcon = hasBreakPoints and "!" or ""
 
