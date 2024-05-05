@@ -154,7 +154,7 @@ local function toggleRecording()
 end
 
 ---play the macro recorded in current slot
-local function playRecording()
+function M.playRecording()
 	-- Guard Clause 1: Toggle Breakpoint instead of Macro
 	-- WARN undocumented and prone to change https://github.com/mfussenegger/nvim-dap/discussions/810#discussioncomment-4623606
 	if dapSharedKeymaps then
@@ -466,9 +466,9 @@ function M.setup(userConfig)
 	keymap("n", breakPointKey, addBreakPoint, { desc = breakPointDesc })
 	keymap("i", insertBreakPointKey, addBreakPoint, { desc = breakPointDesc })
 	local playDesc = dapSharedKeymaps and dapSharedIcon .. "Continue/Play" or icon .. "Play Macro"
-	keymap("n", config.mapping.playMacro, playRecording, { desc = playDesc })
-	keymap("i", config.mapping.insertPlayMacro, playRecording, { desc = playDesc })
-	keymap("t", config.mapping.insertPlayMacro, playRecording, { desc = playDesc })
+	keymap("n", config.mapping.playMacro, M.playRecording, { desc = playDesc })
+	keymap("i", config.mapping.insertPlayMacro, M.playRecording, { desc = playDesc })
+	keymap("t", config.mapping.insertPlayMacro, M.playRecording, { desc = playDesc })
 end
 
 --------------------------------------------------------------------------------
