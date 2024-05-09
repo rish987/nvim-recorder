@@ -269,6 +269,17 @@ function M.playRecording()
 	M.unsetRegOverride()
 end
 
+---aborts the playback of the current macro (if at a breakpoint)
+function M.abortPlayback(silent)
+	if breakCounter == 0 then
+		if not silent then notify("No macro currently playing back") end
+		return
+	end
+
+	notify("Aborted playback of macro")
+	breakCounter = 0
+end
+
 ---changes the active slot
 local function switchMacroSlot()
 	M.unsetRegOverride()
@@ -332,7 +343,7 @@ local function yankMacro()
 	nonEssentialNotify("Copied Macro [" .. reg .. "]:\n" .. macroContent)
 end
 
-local function addBreakPoint()
+function M.addBreakPoint()
 	if isRecording() then
 		-- INFO nothing happens, but the key is still recorded in the macro
 		notify("Macro breakpoint added.")
@@ -463,8 +474,9 @@ function M.setup(userConfig)
 	dapSharedKeymaps = config.dapSharedKeymaps or false
 	local breakPointDesc = dapSharedKeymaps and dapSharedIcon .. "Breakpoint"
 		or icon .. "Insert Macro Breakpoint."
-	keymap("n", breakPointKey, addBreakPoint, { desc = breakPointDesc })
-	keymap("i", insertBreakPointKey, addBreakPoint, { desc = breakPointDesc })
+	keymap("n", breakPointKey, M.addBreakPoint, { desc = breakPointDesc })
+	keymap("i", insertBreakPointKey, M.addBreakPoint, { desc = breakPointDesc })
+	keymap("t", insertBreakPointKey, M.addBreakPoint, { desc = breakPointDesc })
 	local playDesc = dapSharedKeymaps and dapSharedIcon .. "Continue/Play" or icon .. "Play Macro"
 	keymap("n", config.mapping.playMacro, M.playRecording, { desc = playDesc })
 	keymap("i", config.mapping.insertPlayMacro, M.playRecording, { desc = playDesc })
