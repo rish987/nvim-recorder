@@ -144,7 +144,7 @@ local function _toggleRecording()
 		nonEssentialNotify("Recorded [" .. reg .. "]:\n" .. justRecorded)
 		vim.api.nvim_exec_autocmds("User", {
 			pattern = "NvimRecorderRecordEnd",
-			data = { reg = reg, recording = justRecorded },
+			data = { reg = reg, recording = getMacro(reg) },
 		})
 	end
 end
