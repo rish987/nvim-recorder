@@ -162,7 +162,7 @@ function M.playRecording()
 		local dapBreakpointsExist = next(require("dap.breakpoints").get()) ~= nil
 		if dapBreakpointsExist then
 			require("dap").continue()
-			return
+			return false
 		end
 	end
 
@@ -178,7 +178,7 @@ function M.playRecording()
 		setMacro(getCurrReg(), "") -- empties macro since the recursion has been recorded there
 
 		M.unsetRegOverride()
-		return
+		return false
 	end
 
 	vim.api.nvim_exec_autocmds("User", {
@@ -194,13 +194,14 @@ function M.playRecording()
 		notify("Macro Slot [" .. getCurrReg() .. "] is empty.", "warn")
 
 		M.unsetRegOverride()
-		return
+		return false
 	end
 
 	-- EXECUTE MACRO
 	local countGiven = v.count ~= 0
 	local hasBreakPoints = fn.keytrans(macro):find(vim.pesc(breakPointKey)) or fn.keytrans(macro):find(vim.pesc(insertBreakPointKey))
 	local usePerfOptimizations = v.count1 >= perf.countThreshold
+	local macroFinished = false
 
 	-- macro (w/ breakpoints)
 	if hasBreakPoints and not countGiven then
@@ -222,6 +223,7 @@ function M.playRecording()
 		else
 			notify("Reached end of macro")
 			breakCounter = 0
+			macroFinished = true
 		end
 
 	-- macro (w/ perf optimizations)
@@ -260,13 +262,15 @@ function M.playRecording()
 			if perf.noSystemclipboard then opt.clipboard = original.clipboard end
 			opt.eventignore = original.eventignore
 		end, 500)
-
+		macroFinished = true
 	-- macro (regular)
 	else
 		-- normal(v.count1 .. "@" .. reg) -- TODO fix count
 		vim.fn.feedkeys(getMacro(getCurrReg()))
+		macroFinished = true
 	end
 	M.unsetRegOverride()
+	return macroFinished
 end
 
 ---aborts the playback of the current macro (if at a breakpoint)
